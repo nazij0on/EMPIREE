@@ -3,356 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>داشبورد خصوصی شرکت</title>
+    <title>AI Content Bible</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&display=swap" rel="stylesheet">
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, onSnapshot, collection, serverTimestamp, query, addDoc, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
-
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-        let app;
-        let auth;
-        let db;
-        let storage;
-        let userId;
-
-        const loginForm = document.getElementById('login-form');
-        const logoutBtn = document.getElementById('logout-btn');
-        const mainDashboard = document.getElementById('main-dashboard');
-        const fileUpdateForm = document.getElementById('file-update-form');
-        const progressFill = document.getElementById('progress-fill');
-        const progressText = document.getElementById('progress-text');
-        const fileList = document.getElementById('file-list');
-        const welcomeMessage = document.getElementById('welcome-message');
-
-        const characterModal = document.getElementById('character-modal');
-        const closeCharacterModalBtn = document.getElementById('close-character-modal');
-        const characterGallery = document.getElementById('character-gallery');
-        const characterUploadForm = document.getElementById('character-upload-form');
-        const uploadTypeSelect = document.getElementById('upload-type');
-        const uploadFileInput = document.getElementById('upload-file');
-        const uploadBtn = document.getElementById('upload-btn');
-        const uploadProgressText = document.getElementById('upload-progress');
-
-        const initFirebase = async () => {
-            if (Object.keys(firebaseConfig).length > 0) {
-                app = initializeApp(firebaseConfig);
-                auth = getAuth(app);
-                db = getFirestore(app);
-                storage = getStorage(app);
-            } else {
-                console.error("Firebase config is not available. Running in local mode.");
-                return;
-            }
-
-            if (initialAuthToken) {
-                try {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } catch (error) {
-                    console.error("Error signing in with custom token:", error);
-                    await signInAnonymously(auth);
-                }
-            } else {
-                await signInAnonymously(auth);
-            }
-
-            onAuthStateChanged(auth, (user) => {
-                if (user) {
-                    userId = user.uid;
-                    loginForm.classList.add('hidden');
-                    mainDashboard.classList.remove('hidden');
-                    welcomeMessage.textContent = `خوش آمدید، کاربر ${userId.substring(0, 8)}...`;
-                    setupDashboardListeners();
-                    populateBibleContent();
-                } else {
-                    loginForm.classList.remove('hidden');
-                    mainDashboard.classList.add('hidden');
-                }
-            });
-        };
-
-        const setupDashboardListeners = () => {
-            const projectProgressDocRef = doc(db, `/artifacts/${appId}/public/data/project_status/master`);
-            onSnapshot(projectProgressDocRef, (doc) => {
-                if (doc.exists()) {
-                    const data = doc.data();
-                    const progress = data.progress;
-                    progressFill.style.width = `${progress}%`;
-                    progressText.textContent = `${progress}% تکمیل شده`;
-                }
-            }, (error) => {
-                console.error("Error getting project status:", error);
-            });
-
-            const fileUpdatesCollectionRef = collection(db, `/artifacts/${appId}/public/data/file_updates`);
-            const q = query(fileUpdatesCollectionRef);
-            onSnapshot(q, (snapshot) => {
-                fileList.innerHTML = '';
-                const updates = [];
-                snapshot.forEach(doc => {
-                    updates.push(doc.data());
-                });
-
-                updates.sort((a, b) => b.timestamp - a.timestamp);
-
-                updates.forEach(update => {
-                    const li = document.createElement('li');
-                    li.className = 'p-4 bg-gray-700 rounded-lg flex justify-between items-center space-x-reverse space-x-4';
-                    const time = update.timestamp ? new Date(update.timestamp.seconds * 1000).toLocaleString('fa-IR') : 'نامشخص';
-                    li.innerHTML = `
-                        <div>
-                            <p class="font-bold text-lg">${update.fileName}</p>
-                            <p class="text-sm text-gray-400">توسط: ${update.uploader} در ${time}</p>
-                        </div>
-                    `;
-                    fileList.appendChild(li);
-                });
-            }, (error) => {
-                console.error("Error getting file updates:", error);
-            });
-        };
-
-        const uploadFileForCharacter = async (e) => {
-            e.preventDefault();
-            const file = uploadFileInput.files[0];
-            if (!file) {
-                alert('لطفا یک فایل انتخاب کنید.');
-                return;
-            }
-
-            const characterName = characterModal.dataset.character;
-            const uploaderName = auth.currentUser.email || `کاربر ${auth.currentUser.uid.substring(0, 8)}`;
-            const timestamp = new Date().toISOString();
-            const fileRef = ref(storage, `artifacts/${appId}/character_assets/${characterName}/${file.name}-${timestamp}`);
-
-            uploadBtn.disabled = true;
-            uploadProgressText.textContent = "در حال آپلود...";
-            uploadProgressText.classList.remove('hidden');
-
-            try {
-                const uploadTask = await uploadBytes(fileRef, file);
-                const url = await getDownloadURL(uploadTask.ref);
-
-                const assetsCollectionRef = collection(db, `/artifacts/${appId}/public/data/character_assets`);
-                await addDoc(assetsCollectionRef, {
-                    name: file.name,
-                    url: url,
-                    type: file.type.startsWith('image') ? 'image' : 'video',
-                    characterName: characterName,
-                    uploader: uploaderName,
-                    timestamp: serverTimestamp()
-                });
-                
-                e.target.reset();
-                uploadProgressText.textContent = "آپلود موفق!";
-                alert('فایل با موفقیت آپلود شد!');
-            } catch (error) {
-                console.error("Error uploading file:", error);
-                uploadProgressText.textContent = "خطا در آپلود.";
-                alert('خطا در آپلود فایل.');
-            } finally {
-                uploadBtn.disabled = false;
-                uploadProgressText.classList.add('hidden');
-            }
-        };
-
-        const showCharacterModal = (character) => {
-            characterModal.dataset.character = character.name;
-            document.getElementById('modal-name').textContent = character.name;
-            document.getElementById('modal-vibe').textContent = character.vibe;
-            document.getElementById('modal-humor').textContent = character.humor;
-            document.getElementById('modal-style').textContent = character.style;
-            document.getElementById('modal-mantra').textContent = character.mantra;
-            
-            characterModal.classList.remove('hidden');
-            
-            const assetsCollectionRef = collection(db, `/artifacts/${appId}/public/data/character_assets`);
-            const q = query(assetsCollectionRef, where("characterName", "==", character.name));
-            
-            onSnapshot(q, (snapshot) => {
-                characterGallery.innerHTML = '';
-                snapshot.forEach(doc => {
-                    const data = doc.data();
-                    const item = document.createElement('div');
-                    item.className = 'w-full aspect-square relative rounded-lg overflow-hidden shadow-lg';
-                    if (data.type === 'image') {
-                        item.innerHTML = `<img src="${data.url}" alt="${data.name}" class="w-full h-full object-cover">`;
-                    } else if (data.type === 'video') {
-                        item.innerHTML = `<video src="${data.url}" controls class="w-full h-full object-cover"></video>`;
-                    }
-                    characterGallery.appendChild(item);
-                });
-            }, (error) => {
-                console.error("Error fetching character assets:", error);
-                characterGallery.innerHTML = `<p class="text-red-400">خطا در بارگذاری فایل‌ها.</p>`;
-            });
-        };
-
-        const closeCharacterModal = () => {
-            characterModal.classList.add('hidden');
-        };
-        
-        loginForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const email = e.target.email.value;
-            const password = e.target.password.value;
-            try {
-                await signInWithEmailAndPassword(auth, email, password);
-            } catch (error) {
-                alert('خطا در ورود: ' + error.message);
-            }
-        });
-
-        logoutBtn.addEventListener('click', async () => {
-            try {
-                await signOut(auth);
-            } catch (error) {
-                console.error("Error logging out:", error);
-            }
-        });
-
-        fileUpdateForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const fileName = e.target.fileName.value;
-            if (!fileName) return;
-
-            const uploaderName = auth.currentUser.email || `کاربر ${auth.currentUser.uid.substring(0, 8)}`;
-            const fileUpdatesCollectionRef = collection(db, `/artifacts/${appId}/public/data/file_updates`);
-            
-            try {
-                await addDoc(fileUpdatesCollectionRef, {
-                    fileName,
-                    uploader: uploaderName,
-                    timestamp: serverTimestamp()
-                });
-                e.target.reset();
-            } catch (error) {
-                console.error("Error adding file update:", error);
-                alert('خطا در به‌روزرسانی فایل.');
-            }
-        });
-
-        characterUploadForm.addEventListener('submit', uploadFileForCharacter);
-        closeCharacterModalBtn.addEventListener('click', closeCharacterModal);
-
-        const characters = [
-            { name: "جادوگر بنفش", vibe: "داستان‌ساز، chaotic اما جذاب.", humor: "شروع با هیچ، پایان با یک داستان غیرقابل باور.", style: "عبای بنفش، جزئیات طلایی، زنجیر.", mantra: "Every move is a love story… or a scam.", color: "bg-purple-800" },
-            { name: "جادوگر آبی", vibe: "آرام، کم‌حرف، هر کلمه‌اش پرمعنا.", humor: "طنز کنایه‌آمیز و فلسفی.", style: "عبای آبی سلطنتی، عینک آفتابی.", mantra: "Silence is the loudest flex.", color: "bg-blue-800" },
-            { name: "ASMR Beauty Guru", vibe: "اغراق‌شده، آرامش‌دهنده در ظاهر، ولی با دیالوگ‌های بامزه و غیرمنطقی.", humor: "ایجاد تنش از طریق جملات غیرمنتظره.", style: "پس‌زمینه پاستلی، میکروفون‌های ASMR بزرگ.", mantra: "Relax… I'm just about to tell you something you'll hate.", color: "bg-pink-800" },
-            { name: "Love Island Parody", vibe: "کاراکتر اینفلوئنسر عشق، عاشق نمایش و دروغ.", humor: "مسخره کردن اصطلاحات و رفتارهای اینفلوئنسری.", style: "پس‌زمینه جزیره‌ای، لباس‌های رنگارنگ.", mantra: "In this love game, my only goal is to win… and get sponsored.", color: "bg-teal-800" },
-            { name: "Music Video Parody", vibe: "آرتیست خودشیفته و بااستعداد.", humor: "استفاده از اصطلاحات موسیقی برای شوخی.", style: "استودیو موسیقی، لباس‌های street style.", mantra: "The only thing I'm dropping is the beat… and maybe some truth bombs.", color: "bg-red-800" },
-            { name: "Fitness Guru", vibe: "مربی انگیزشی در ظاهر، با محتوای بیهوده.", humor: "اغراق در جملات انگیزشی.", style: "باشگاه مدرن، لباس ورزشی تنگ.", mantra: "I'm not here to get you in shape, I'm here to sell you the shape I'm in.", color: "bg-orange-800" },
-            { name: "Serious News Anchor", vibe: "جدی، اما با نفوذ میم و ترند.", humor: "شکستن جدیت خبر با یک شوخی.", style: "استودیوی خبری شیک.", mantra: "And now for the news you didn't ask for, but desperately needed.", color: "bg-gray-700" },
-            { name: "Business Tycoon", vibe: "خشک و منطقی، همه چیز را بیزینس می‌بیند.", humor: "استفاده از اصطلاحات مالی برای توصیف روابط.", style: "دفتر کار شیک، لباس رسمی.", mantra: "Everything is a business opportunity… even silence.", color: "bg-indigo-800" },
-            { name: "Meme Creator", vibe: "با سرعت نور از ترندها استفاده می‌کند.", humor: "ایجاد میم‌های مسخره از ترندها.", style: "پس‌زمینه ساده، با افکت‌های TikTok.", mantra: "If it's a trend, it's my content.", color: "bg-green-800" },
-            { name: "Influencer Parody", vibe: "نمایش تمام جزئیات زندگی با اغراق.", humor: "تقلید از رفتار اینفلوئنسرها.", style: "پس‌زمینه مناظر طبیعی یا کافه‌های شیک.", mantra: "My life is a movie... and you're all just watching.", color: "bg-rose-800" }
-        ];
-
-        const tools = [
-            { name: "Runway", status: "(در حال حاضر دارید)", desc: "برای تولید و ویرایش ویدیو.", icon: "🎬" },
-            { name: "VEO 3", status: "(نیاز به خرید)", desc: "برای ساخت صحنه‌های سینمایی.", icon: "🎥" },
-            { name: "Scenario AI", status: "(نیاز به خرید)", desc: "برای ساخت مدل کاراکترها.", icon: "🤖" },
-            { name: "ElevenLabs", status: "(نیاز به خرید)", desc: "برای صداگذاری طبیعی.", icon: "🗣️" },
-            { name: "ChatGPT / Claude", status: "", desc: "برای ایده‌پردازی و اسکریپت‌نویسی.", icon: "✍️" }
-        ];
-
-        const characterGrid = document.getElementById('character-grid');
-        const toolsList = document.getElementById('tools-list');
-
-        const populateBibleContent = () => {
-            if (!characterGrid || !toolsList) {
-                console.error("Bible content elements not found in the DOM.");
-                return;
-            }
-            
-            characters.forEach(char => {
-                const card = document.createElement('div');
-                card.className = `character-card bg-gray-700 p-4 rounded-lg text-center flex flex-col justify-center items-center h-40`;
-                card.innerHTML = `<h5 class="text-xl font-bold">${char.name}</h5>`;
-                card.addEventListener('click', () => showCharacterModal(char));
-                characterGrid.appendChild(card);
-            });
-
-            tools.forEach(tool => {
-                const item = document.createElement('li');
-                item.className = 'flex items-start space-x-reverse space-x-3';
-                item.innerHTML = `
-                    <span class="text-2xl pt-1">${tool.icon}</span>
-                    <div>
-                        <span class="font-bold">${tool.name}</span>
-                        <span class="text-sm text-yellow-400">${tool.status}</span>
-                        <p class="text-sm text-gray-400">${tool.desc}</p>
-                    </div>
-                `;
-                toolsList.appendChild(item);
-            });
-
-            const phaseCtx = document.getElementById('phaseChart').getContext('2d');
-            const phaseChart = new Chart(phaseCtx, {
-                type: 'doughnut',
-                data: {
-                    labels: ['Foundation', 'Growth', 'Empire'],
-                    datasets: [{
-                        label: 'Project Phases',
-                        data: [40, 30, 30],
-                        backgroundColor: ['#a855f7', '#facc15', '#be185d'],
-                        borderColor: '#1f2937',
-                        borderWidth: 4,
-                        hoverOffset: 8
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    cutout: '70%',
-                    plugins: {
-                        legend: {
-                            position: 'right',
-                            labels: {
-                                color: '#d1d5db',
-                                font: {
-                                    family: 'Vazirmatn',
-                                    size: 14
-                                },
-                                boxWidth: 20,
-                                padding: 20
-                            }
-                        },
-                        tooltip: {
-                            titleFont: { family: 'Vazirmatn' },
-                            bodyFont: { family: 'Vazirmatn' },
-                            callbacks: {
-                                label: function(context) {
-                                    let label = context.label || '';
-                                    if (label) {
-                                        label += ': ';
-                                    }
-                                    if (context.parsed !== null) {
-                                        label += context.parsed + '%';
-                                    }
-                                    return label;
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        };
-
-        window.onload = initFirebase;
-    </script>
     <style>
         body {
             font-family: 'Vazirmatn', sans-serif;
+            scroll-behavior: smooth;
         }
         .character-card {
             transition: all 0.3s ease;
@@ -362,65 +22,17 @@
             transform: scale(1.05);
             box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
         }
-        .modal-bg {
-            background-color: rgba(0, 0, 0, 0.7);
-        }
     </style>
 </head>
-<body class="bg-gray-900 text-gray-200 min-h-screen flex items-center justify-center p-4">
+<body class="bg-gray-900 text-gray-200 min-h-screen p-4">
 
-    <!-- Login Page -->
-    <div id="login-form" class="bg-gray-800 p-8 rounded-2xl shadow-lg border border-purple-800 w-full max-w-sm">
-        <h2 class="text-3xl font-bold text-center mb-6 text-yellow-400">ورود به داشبورد</h2>
-        <form class="space-y-4">
-            <div>
-                <label for="email" class="block text-gray-400 mb-1">ایمیل سازمانی</label>
-                <input type="email" id="email" name="email" class="w-full px-4 py-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-600" required>
-            </div>
-            <div>
-                <label for="password" class="block text-gray-400 mb-1">رمز عبور</label>
-                <input type="password" id="password" name="password" class="w-full px-4 py-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-600" required>
-            </div>
-            <button type="submit" class="w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg transition-colors duration-300">ورود</button>
-        </form>
-        <div class="mt-6 text-center text-sm text-gray-500">
-            <p>برای تست می‌توانید از هر ایمیل و رمز عبوری استفاده کنید.</p>
-        </div>
-    </div>
-
-    <!-- Main Dashboard -->
-    <div id="main-dashboard" class="hidden w-full max-w-7xl bg-gray-800 p-8 rounded-2xl shadow-lg border border-purple-800 space-y-8">
+    <!-- Main Content -->
+    <div class="w-full max-w-7xl mx-auto bg-gray-800 p-8 rounded-2xl shadow-lg border border-purple-800 space-y-8">
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-700 pb-4 mb-8">
-            <h1 class="text-3xl font-bold text-yellow-400 mb-2 md:mb-0">داشبورد پروژه</h1>
-            <div class="flex items-center space-x-reverse space-x-4">
-                <p id="welcome-message" class="text-sm text-gray-400"></p>
-                <button id="logout-btn" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition-colors duration-300">خروج</button>
-            </div>
+            <h1 class="text-3xl font-bold text-yellow-400 mb-2 md:mb-0">AI Content Bible</h1>
+            <p class="text-sm text-gray-400">یک مرجع کامل برای پروژه محتوای AI</p>
         </div>
 
-        <!-- Project Progress Section -->
-        <div>
-            <h2 class="text-2xl font-bold mb-4 text-purple-400">وضعیت پیشرفت پروژه</h2>
-            <div class="bg-gray-700 rounded-full h-8 overflow-hidden relative">
-                <div id="progress-fill" class="bg-green-500 h-full transition-all duration-500 ease-in-out" style="width: 0%;"></div>
-                <div id="progress-text" class="absolute inset-0 flex items-center justify-center text-sm text-white font-bold">0% تکمیل شده</div>
-            </div>
-            <p class="text-sm text-gray-400 mt-2">این نوار پیشرفت به صورت لحظه‌ای به‌روز می‌شود و وضعیت کلی پروژه را نشان می‌دهد.</p>
-        </div>
-
-        <!-- File Updates Section -->
-        <div>
-            <h2 class="text-2xl font-bold mb-4 text-purple-400">به‌روزرسانی فایل‌ها</h2>
-            <form id="file-update-form" class="bg-gray-700 p-4 rounded-lg flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-reverse md:space-x-4 mb-6">
-                <input type="text" id="fileName" name="fileName" placeholder="نام فایل را وارد کنید..." class="w-full md:flex-1 px-4 py-2 rounded-lg bg-gray-800 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-yellow-400" required>
-                <button type="submit" class="w-full md:w-auto px-6 py-2 bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-bold rounded-lg transition-colors duration-300">ثبت به‌روزرسانی</button>
-            </form>
-            <ul id="file-list" class="space-y-4">
-            </ul>
-        </div>
-        
-        <hr class="my-8 border-gray-700" />
-        
         <!-- The AI Content Bible Section -->
         <div>
             <h2 class="text-2xl font-bold mb-6 text-yellow-400">نقشه راه و Bible محتوای AI</h2>
@@ -519,48 +131,112 @@
             </div>
         </div>
     </div>
+    
+    <script>
+        const characters = [
+            { name: "جادوگر بنفش", color: "bg-purple-800" },
+            { name: "جادوگر آبی", color: "bg-blue-800" },
+            { name: "ASMR Beauty Guru", color: "bg-pink-800" },
+            { name: "Love Island Parody", color: "bg-teal-800" },
+            { name: "Music Video Parody", color: "bg-red-800" },
+            { name: "Fitness Guru", color: "bg-orange-800" },
+            { name: "Serious News Anchor", color: "bg-gray-700" },
+            { name: "Business Tycoon", color: "bg-indigo-800" },
+            { name: "Meme Creator", color: "bg-green-800" },
+            { name: "Influencer Parody", color: "bg-rose-800" }
+        ];
+        
+        const tools = [
+            { name: "Runway", status: "(در حال حاضر دارید)", desc: "برای تولید و ویرایش ویدیو.", icon: "🎬" },
+            { name: "VEO 3", status: "(نیاز به خرید)", desc: "برای ساخت صحنه‌های سینمایی.", icon: "🎥" },
+            { name: "Scenario AI", status: "(نیاز به خرید)", desc: "برای ساخت مدل کاراکترها.", icon: "🤖" },
+            { name: "ElevenLabs", status: "(نیاز به خرید)", desc: "برای صداگذاری طبیعی.", icon: "🗣️" },
+            { name: "ChatGPT / Claude", status: "", desc: "برای ایده‌پردازی و اسکریپت‌نویسی.", icon: "✍️" }
+        ];
 
-    <!-- Character Details Modal -->
-    <div id="character-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 modal-bg">
-        <div class="bg-gray-800 p-8 rounded-2xl shadow-lg border border-purple-800 w-full max-w-3xl space-y-6">
-            <div class="flex justify-between items-center border-b border-gray-700 pb-4">
-                <h3 id="modal-name" class="text-3xl font-bold text-yellow-400"></h3>
-                <button id="close-character-modal" class="text-gray-400 hover:text-red-500 text-3xl">&times;</button>
-            </div>
+        const characterGrid = document.getElementById('character-grid');
+        const toolsList = document.getElementById('tools-list');
+
+        const populateContent = () => {
+            if (!characterGrid || !toolsList) {
+                console.error("Content elements not found in the DOM.");
+                return;
+            }
             
-            <div class="grid md:grid-cols-2 gap-6">
-                <div class="space-y-4 text-lg">
-                    <p><strong>ویژگی اصلی:</strong> <span id="modal-vibe" class="text-gray-300"></span></p>
-                    <p><strong>کد شوخی:</strong> <span id="modal-humor" class="text-gray-300"></span></p>
-                    <p><strong>استایل بصری:</strong> <span id="modal-style" class="text-gray-300"></span></p>
-                    <p><strong>مانترا:</strong> <span id="modal-mantra" class="text-gray-300"></span></p>
-                </div>
+            characters.forEach(char => {
+                const card = document.createElement('div');
+                card.className = `character-card ${char.color} p-4 rounded-lg text-center flex flex-col justify-center items-center h-40`;
+                card.innerHTML = `<h5 class="text-xl font-bold">${char.name}</h5>`;
+                characterGrid.appendChild(card);
+            });
 
-                <div class="space-y-4">
-                    <h4 class="text-xl font-bold text-purple-400">آپلود Assets</h4>
-                    <form id="character-upload-form" class="space-y-2">
-                        <label for="upload-type" class="block text-gray-400">نوع فایل:</label>
-                        <select id="upload-type" class="w-full px-4 py-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-yellow-400">
-                            <option value="image">تصویر</option>
-                            <option value="video">ویدیو</option>
-                        </select>
-                        <input type="file" id="upload-file" class="w-full px-4 py-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-yellow-400" required>
-                        <div class="flex items-center space-x-reverse space-x-4">
-                            <button type="submit" id="upload-btn" class="px-6 py-2 bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-bold rounded-lg transition-colors duration-300">آپلود</button>
-                            <p id="upload-progress" class="hidden text-sm text-gray-400"></p>
-                        </div>
-                    </form>
-                </div>
-            </div>
+            tools.forEach(tool => {
+                const item = document.createElement('li');
+                item.className = 'flex items-start space-x-reverse space-x-3';
+                item.innerHTML = `
+                    <span class="text-2xl pt-1">${tool.icon}</span>
+                    <div>
+                        <span class="font-bold">${tool.name}</span>
+                        <span class="text-sm text-yellow-400">${tool.status}</span>
+                        <p class="text-sm text-gray-400">${tool.desc}</p>
+                    </div>
+                `;
+                toolsList.appendChild(item);
+            });
 
-            <hr class="my-6 border-gray-700" />
-            
-            <h4 class="text-xl font-bold text-purple-400">گالری Assets</h4>
-            <div id="character-gallery" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mt-4">
-            </div>
-
-        </div>
-    </div>
-
+            const phaseCtx = document.getElementById('phaseChart').getContext('2d');
+            const phaseChart = new Chart(phaseCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Foundation', 'Growth', 'Empire'],
+                    datasets: [{
+                        label: 'Project Phases',
+                        data: [40, 30, 30],
+                        backgroundColor: ['#a855f7', '#facc15', '#be185d'],
+                        borderColor: '#1f2937',
+                        borderWidth: 4,
+                        hoverOffset: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '70%',
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: {
+                                color: '#d1d5db',
+                                font: {
+                                    family: 'Vazirmatn',
+                                    size: 14
+                                },
+                                boxWidth: 20,
+                                padding: 20
+                            }
+                        },
+                        tooltip: {
+                            titleFont: { family: 'Vazirmatn' },
+                            bodyFont: { family: 'Vazirmatn' },
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    if (context.parsed !== null) {
+                                        label += context.parsed + '%';
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        };
+        
+        window.onload = populateContent;
+    </script>
 </body>
 </html>
